@@ -424,6 +424,9 @@
                     );
 
                 if (neighbors.length == 0) {
+                    currentCase.virtualLines.forEach(line => {
+                        line.remove();
+                    });
                     currentCase.virtualLines = [];
                     return;
                 }
