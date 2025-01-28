@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        .context-menu {
+            display: none;
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="contextMenu" class="context-menu"></div>
+    <script language="javascript">
+        const caseSize = 50; // Taille d'une case en pixels
+        const circleSize = 30; // Taille d'un cercle en pixels
+        const backgroundColor = '#BCD8C1'; // Couleur de fond des cases
+        const player1Color = '#00b4d8'; // Couleur du joueur 1
+        const player2Color = '#ff8fab'; // Couleur du joueur 2
+        const gridlength = 15; // Taille de la grille
+        let cases = []; // Tableau 2D pour stocker les cases
+        let realLines = []; // Tableau pour stocker les lignes réelles
+        let virtualLines = []; // Tableau pour stocker les lignes virtuelles
+        let player = 1; // Variable globale pour le joueur actif
+
+        class Case {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.size = 50;
+                this.player = 0;
+                this.id = 'case' + this.x + "_" + this.y;
+                this.virtualLines = [];
+                this.canHaveLine = true;
+            }
+
+            addVirtualLine(line) {
+                if (this.canHaveLine == true) {
+                    this.virtualLines.push(line);
+                }
+            }
+
+            static removeAllVirtualLines() {
+                cases.forEach(row => {
+                    row.forEach(cell => {
+                        cell.virtualLines.forEach(line => {
+                            if (line.real == false) {
+                                line.remove();
+                            }
+                        });
+                        cell.virtualLines = [];
+                    });
+                });
+            }
+
+            create() {
+                var div = document.createElement('div');
+                div.style.width = '50px';
+                div.style.height = '50px';
+                div.style.backgroundColor = backgroundColor;
+                div.style.position = 'absolute';
+                div.style.left = this.x * caseSize + 'px';
+                div.style.top = this.y * caseSize + 'px';
+                div.style.border = '1px solid black';
+                div.id = this.id;
+                div.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'block';
+                    menu.style.left = e.pageX + 'px';
+                    menu.style.top = e.pageY + 'px';
+                    menu.innerHTML = `
+                <div>Position: (${this.x}, ${this.y})</div>
+                <div>Joueur: ${this.player}</div>
+                <div>ID: ${this.id}</div>
+                <div>Peut avoir des lignes: ${this.canHaveLine}</div>
+                <div>Lignes virtuelles: ${this.virtualLines.length}</div>
+                    `;
+                });
+                // Fermer le menu au clic ailleurs
+                document.addEventListener('click', (e) => {
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'none';
+                });
+
+                // Utilisation d'une fonction fléchée pour préserver le contexte
+                div.onclick = () => this.draw(player);
+
+                document.body.appendChild(div);
+            }
+
+            draw(currentPlayer) {
+                if (this.player != 0) { //si la case est déja occupée on ne fait rien
+                    return;
+                }
+
+                var cell = document.getElementById('case' + this.x + "_" + this.y);
+
+                // Créer le cercle
+                var circle = document.createElement('div');
+                circle.style.width = circleSize + 'px';
+                circle.style.height = circleSize + 'px';
+                circle.style.borderRadius = '50%';
+                circle.style.position = 'absolute';
+                circle.id = 'circle' + this.x + "_" + this.y;
+
+
+                // Centrer le cercle dans la case (50px - 30px = 20px de différence, donc 10px de marge)
+                var diff = (caseSize - circleSize) / 2;
+                circle.style.left = diff + 'px';
+                circle.style.top = diff + 'px';
+
+                // Définir la couleur selon le joueur
+                if (currentPlayer == 1) {
+                    this.player = 1;
+                    circle.style.backgroundColor = player1Color;
+                    player = 2;
+                } else if (currentPlayer == 2) {
+                    this.player = 2;
+                    circle.style.backgroundColor = player2Color;
+                    player = 1;
+                }
+                cell.appendChild(circle);
+                boucle(this);
+            }
+
+            neighbors(player, once = false) {
+                let neighbors = [];
+                if (this.x > 0 && cases[this.y][this.x - 1].player == player && cases[this.y][this.x - 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y][this.x - 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.x < gridlength - 1 && cases[this.y][this.x + 1].player == player && cases[this.y][this.x + 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y][this.x + 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.y > 0 && cases[this.y - 1][this.x].player == player && cases[this.y - 1][this.x].canHaveLine == true) {
+                    neighbors.push(cases[this.y - 1][this.x]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.y < gridlength - 1 && cases[this.y + 1][this.x].player == player && cases[this.y + 1][this.x].canHaveLine == true) {
+                    neighbors.push(cases[this.y + 1][this.x]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.x > 0 && this.y > 0 && cases[this.y - 1][this.x - 1].player == player && cases[this.y - 1][this.x - 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y - 1][this.x - 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.x < gridlength - 1 && this.y > 0 && cases[this.y - 1][this.x + 1].player == player && cases[this.y - 1][this.x + 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y - 1][this.x + 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.x > 0 && this.y < gridlength - 1 && cases[this.y + 1][this.x - 1].player == player && cases[this.y + 1][this.x - 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y + 1][this.x - 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+                if (this.x < gridlength - 1 && this.y < gridlength - 1 && cases[this.y + 1][this.x + 1].player == player && cases[this.y + 1][this.x + 1].canHaveLine == true) {
+                    neighbors.push(cases[this.y + 1][this.x + 1]);
+                    if (once) {
+                        return neighbors;
+                    }
+                }
+
+                return neighbors;
+            }
+
+            canNotHaveLine() {
+                this.canHaveLine = false;
+                this.virtualLines.forEach(line => {
+                    line.remove();
+                });
+                this.virtualLines = [];
+                var div = document.getElementById(this.id);
+                var circle = document.getElementById('circle' + this.x + "_" + this.y);
+                circle.style.border = '1px solid black';
+                circle.style.opacity = '0.5';
+                div.onclick = null;
+            }
+        }
+
+        class Line {
+            constructor(case1, case2, real) {
+                this.case1 = case1;
+                this.case2 = case2;
+                this.real = real; // true si la ligne est réelle, false si elle est virtuelle (pour les lignes qu'on est entrain de contruire)
+                this.id = 'line' + this.case1.x + '_' + this.case1.y + '_' + this.case2.x + '_' + this.case2.y;
+                if (this.real) {
+                    if (Line.lineExists(this.case1, this.case2, realLines)) {
+                        return false;
+                    }
+                    realLines.push(this);
+                } else {
+                    if (Line.lineExists(this.case1, this.case2, virtualLines)) {
+                        return false;
+                    }
+                    virtualLines.push(this);
+                }
+            }
+
+            static lineExists(case1, case2, array) {
+                return array.some(line =>
+                    (line.case1 === case1 && line.case2 === case2) ||
+                    (line.case1 === case2 && line.case2 === case1)
+                );
+            }
+
+            create() {
+                const line = document.createElement('div');
+                line.style.position = 'absolute';
+                line.style.height = '4px';
+                line.style.backgroundColor = this.case1.player == 1 ? player1Color : player2Color;
+                line.style.zIndex = '1000';
+                line.style.borderRadius = '2px'; // Arrondir les bouts de ligne
+                if (this.real == false) {
+                    line.style.opacity = '0.5';
+                }
+                line.id = this.id;
+                line.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'block';
+                    menu.style.left = e.pageX + 'px';
+                    menu.style.top = e.pageY + 'px';
+                    menu.innerHTML = `
+                <div>case1: (${this.case1.id})</div>
+                <div>case2: ${this.case2.id}</div>
+                <div>ID: ${this.id}</div>
+                <div> statut: ${this.real}</div>
+                    `;
+                });
+
+                // Fermer le menu au clic ailleurs
+                document.addEventListener('click', (e) => {
+                    const menu = document.getElementById('contextMenu');
+                    menu.style.display = 'none';
+                });
+
+                // Calculer les coordonnées du centre des cases
+                const x1 = this.case1.x * caseSize + (caseSize / 2);
+                const y1 = this.case1.y * caseSize + (caseSize / 2);
+                const x2 = this.case2.x * caseSize + (caseSize / 2);
+                const y2 = this.case2.y * caseSize + (caseSize / 2);
+
+                // Calculer la longueur et l'angle de la ligne
+                const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)) + 2;
+                const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
+
+                // Appliquer les styles pour positionner la ligne
+                line.style.width = length + 'px';
+                line.style.left = x1 + 'px';
+                line.style.top = y1 - 2 + 'px'; // -2 pour centrer la ligne (épaisseur/2)
+                line.style.transform = `rotate(${angle}deg)`;
+                line.style.transformOrigin = '0 50%';
+
+                document.body.appendChild(line);
+            }
+
+            remove() {
+                // Supprimer du tableau approprié
+                if (this.real) {
+                    realLines.splice(realLines.indexOf(this), 1);
+                } else {
+                    virtualLines.splice(virtualLines.indexOf(this), 1);
+                }
+                // Supprimer l'élément DOM
+                const element = document.getElementById(this.id);
+                if (element) {
+                    element.remove();
+                }
+
+                this.case1 = null;
+                this.case2 = null;
+            }
+
+            static removeAllVirtual() {
+                virtualLines.forEach(line => {
+                    const element = document.getElementById(line.id);
+                    if (element) {
+                        element.remove();
+                    }
+                    line.case1 = null;
+                    line.case2 = null;
+                });
+                virtualLines = [];
+            }
+
+            static removeAllReal() {
+                realLines.forEach(line => {
+                    const element = document.getElementById(line.id);
+                    if (element) {
+                        element.remove();
+                    }
+                    line.case1 = null;
+                    line.case2 = null;
+                });
+                realLines = [];
+            }
+
+            makeReal() {
+                this.real = true;
+                realLines.push(this);
+                virtualLines.splice(virtualLines.indexOf(this), 1);
+                const element = document.getElementById(this.id);
+                if (element) {
+                    element.style.opacity = '1';
+                }
+                this.create();
+            }
+        }
+
+        function createGrid() {
+            // Créer un conteneur pour la grille
+            const container = document.createElement('div');
+            container.style.position = 'relative';
+            container.style.width = (gridlength * caseSize) + 'px';
+            container.style.height = (gridlength * caseSize) + 'px';
+            container.style.display = 'flex';
+            container.style.flexWrap = 'wrap';
+            document.body.appendChild(container);
+
+            // Créer les cases
+            for (let y = 0; y < gridlength; y++) {
+                cases[y] = [];
+                for (let x = 0; x < gridlength; x++) {
+                    cases[y][x] = new Case(x, y);
+                    cases[y][x].create();
+                }
+            }
+        }
+
+        // Appeler la fonction au chargement
+        window.onload = function () {
+            createGrid();
+        }
+
+        function countIntersections(line, lineArray) {
+            let intersectionCount = 0;
+
+            // Fonction helper pour détecter l'intersection entre deux segments
+            function doLinesIntersect(line1, line2) {
+                // Extraire les coordonnées des points
+                let x1 = line1.case1.x;
+                let y1 = line1.case1.y;
+                let x2 = line1.case2.x;
+                let y2 = line1.case2.y;
+
+                let x3 = line2.case1.x;
+                let y3 = line2.case1.y;
+                let x4 = line2.case2.x;
+                let y4 = line2.case2.y;
+
+                // Calculer les déterminants
+                let den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+                if (den == 0) return false; // Lignes parallèles
+
+                let t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+                let u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
+
+                // Vérifier si l'intersection est sur les deux segments
+                return (t >= 0 && t <= 1 && u >= 0 && u <= 1);
+            }
+
+            // Vérifier l'intersection avec chaque ligne du tableau
+            for (let otherLine of lineArray) {
+                // Ne pas compter l'intersection avec la ligne elle-même
+                if (line.id !== otherLine.id) {
+                    if (line.case1.player !== otherLine.case1.player) {
+                        if (doLinesIntersect(line, otherLine)) {
+                            intersectionCount++;
+                        }
+                    }
+                }
+            }
+
+            return intersectionCount;
+        }
+
+        function boucle(startingCase) { // vérifie si il y'a une boucle
+            console.log(startingCase.id);
+            let i = 0; // pour empecher les boucles infinies
+            visited = []; // aussi pour empecher les boucles infinies en vérifiant si la case a déja été visitée
+            let boucleFound = false;
+            recursive(startingCase);
+            /* async  */function recursive(currentCase) {
+                if (boucleFound) {
+                    return;
+                }
+
+                i++;
+                if (i > 1000) {
+                    console.log('boucle infinie');
+                    return;
+                }
+
+                // Obtenir les voisins avec un meilleur filtrage
+                let neighbors = (i === 1) ?
+                    currentCase.neighbors(currentCase.player, true) :
+                    currentCase.neighbors(currentCase.player).filter(n =>
+                        !visited.includes(n) || n === startingCase
+                    );
+
+                if (neighbors.length == 0) {
+                    currentCase.virtualLines = [];
+                    return;
+                }
+                for (let neighbor of neighbors) {
+                    if (neighbor == startingCase) {
+                        if (i > 3 && isValidLoop(visited)) {  // on ne peut pas avoir une boucle de moins de 3 cases
+                            console.log(startingCase.id);
+
+                            let line = new Line(currentCase, neighbor, false);
+                            line.create();
+                            console.log("\x1b[44mla boucle est bouclée, i =  " + i);
+                            boucleFound = true;
+                            drawBoucle(); // la boucle est bouclée
+                            return;
+                        }
+                    } else if (!visited.includes(neighbor)) {
+                        /* await sleep(200); */
+                        visited.push(neighbor);
+                        let line = new Line(currentCase, neighbor, false);
+                        line.create();
+                        recursive(neighbor);
+                    }
+                }
+            }
+            console.log('fin de boucle, i =  ' + i);
+            Line.removeAllVirtual();
+            Case.removeAllVirtualLines();
+        }
+
+        function sleep(time) {
+            return new Promise((resolve) => setTimeout(resolve, time));
+        }
+
+        function isValidLoop(path) {
+            // Vérifier que le chemin forme une boucle valide
+            for (let i = 0; i < path.length - 1; i++) {
+                for (let j = i + 2; j < path.length; j++) {
+                    if (Line.lineExists(path[i], path[j], virtualLines)) {
+                        console.log('croisement invalide');
+                        return false; // Détection de croisement invalide
+                    }
+                }
+            }
+            return true;
+        }
+
+        function drawBoucle() {
+            let countencercledcases = countEncercledCases();
+            if (encercledCases > 0) {
+                // Créer une copie du tableau virtualLines
+                let virtualLinesCopy = [...virtualLines];
+
+                for (let line of virtualLinesCopy) {
+                    line.makeReal();
+                }
+            }
+        }
+
+        /* async */ function countEncercledCases() {
+            encercledCases = 0;
+            for (let y = 1; y < gridlength - 1; y++) {
+                for (let x = 1; x < gridlength - 1; x++) {
+                    if (cases[y][x].player == player && cases[y][x].canHaveLine == true) {
+                        line1 = new Line(cases[y][x], cases[y - 1][0], false);
+                        line2 = new Line(cases[y][x], cases[y - 1][gridlength - 1], false);  // deux ligne pour diminuer les probabilités de faux positifs a propos des case encerclées.
+                        line1.create();
+                        line2.create();
+                        console.log('nombre d\'intersection : ' + countIntersections(line1, virtualLines) + ' ' + countIntersections(line2, virtualLines));
+                        if (countIntersections(line1, virtualLines) % 2 !== 0 && countIntersections(line2, virtualLines) % 2 !== 0 && countIntersections(line1, virtualLines) !== 0 && countIntersections(line2, virtualLines) !== 0) {
+                            cases[y][x].canNotHaveLine();
+                            encercledCases++;
+                        }
+                        //enlever les ligne une fois qu'on a vérifier si la case est encerclées
+                        line1.remove();
+                        line2.remove();
+                        //await sleep(1000);
+                    }
+                }
+            }
+            console.log('fin de countEncercledCases');
+            return encercledCases;
+            //Line.removeAllVirtual();
+            //Case.removeAllVirtualLines();
+        }
+
+    </script>
+</body>
+
+</html>
