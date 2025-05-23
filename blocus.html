@@ -5,8 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
-    <style>
-        .context-menu {
+    <style>        .context-menu {
             display: none;
             position: absolute;
             background: white;
@@ -15,24 +14,130 @@
             border-radius: 4px;
             box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
             z-index: 1000;
+        }        .game-ui {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #333;
+            font-family: Arial, sans-serif;
+            z-index: 2000;
+            min-width: 200px;
+            max-width: 250px;
+        }
+
+        .score-display {
+            margin-bottom: 10px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .player-turn {
+            margin-bottom: 10px;
+            font-size: 16px;
+            padding: 5px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .mode-controls {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+
+        .mode-button {
+            display: inline-block;
+            margin: 2px;
+            padding: 5px 10px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .mode-button.active {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .dev-controls {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #ccc;
+        }
+
+        .debug-line {
+            stroke-width: 6px;
+            opacity: 0.8;
+            z-index: 100;
+        }
+
+        .debug-step {
+            animation: debugPulse 1s ease-in-out;
+        }
+
+        @keyframes debugPulse {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 1; }
         }
     </style>
 </head>
 
 <body>
     <div id="contextMenu" class="context-menu"></div>
+    
+    <!-- Interface de jeu -->
+    <div id="gameUI" class="game-ui">
+        <div class="score-display">
+            <div>Joueur 1: <span id="player1Score">0</span> points</div>
+            <div>Joueur 2: <span id="player2Score">0</span> points</div>
+        </div>
+        <div id="playerTurn" class="player-turn">Tour du Joueur 1</div>
+        
+        <div class="mode-controls">
+            <div>Mode:</div>
+            <div id="simpleMode" class="mode-button active" onclick="setGameMode('simple')">Simple</div>
+            <div id="devMode" class="mode-button" onclick="setGameMode('dev')">Développeur</div>
+        </div>
+        
+        <div id="devControls" class="dev-controls" style="display: none;">
+            <button onclick="runEnclosureTests()">Tests Enclosure</button>
+            <button onclick="runQuickCaptureTest()">Test Capture</button>
+            <button onclick="clearBoard()">Clear Board</button>            <div>
+                <label>Vitesse debug: </label>
+                <input type="range" id="debugSpeed" min="100" max="3000" value="1000" 
+                       onchange="updateDebugSpeed(this.value)">
+                <span id="speedValue">1000ms</span>
+            </div>
+        </div>
+    </div>
     <script language="javascript">
         const caseSize = 50; // Taille d'une case en pixels
         const circleSize = 30; // Taille d'un cercle en pixels
         const backgroundColor = '#BCD8C1'; // Couleur de fond des cases
         const player1Color = '#00b4d8'; // Couleur du joueur 1
-        const player2Color = '#ff8fab'; // Couleur du joueur 2
-        const gridlength = 15; // Taille de la grille
+        const player2Color = '#ff8fab'; // Couleur du joueur 2        const gridlength = 15; // Taille de la grille
         let cases = []; // Tableau 2D pour stocker les cases
         let realLines = []; // Tableau pour stocker les lignes réelles
         let virtualLines = []; // Tableau pour stocker les lignes virtuelles
         let player = 1; // Variable globale pour le joueur actif
+        let currentLoopPlayer = 0; // Store the player who formed the loop being checked
+        let gridlength = 15; // Taille de la grille
 
+        // Système de points
+        let player1Score = 0;
+        let player2Score = 0;
+        
+        // Système de modes
+        let devMode = false;
+        let debugStepDelay = 1000; // Délai en ms pour le mode dev
+        let currentDebugStep = 0;
+
+        // --- Case Class (version unique) ---
         class Case {
             constructor(x, y) {
                 this.x = x;
@@ -40,27 +145,8 @@
                 this.size = 50;
                 this.player = 0;
                 this.id = 'case' + this.x + "_" + this.y;
-                this.virtualLines = [];
                 this.canHaveLine = true;
-            }
-
-            addVirtualLine(line) {
-                if (this.canHaveLine == true) {
-                    this.virtualLines.push(line);
-                }
-            }
-
-            static removeAllVirtualLines() {
-                cases.forEach(row => {
-                    row.forEach(cell => {
-                        cell.virtualLines.forEach(line => {
-                            if (line.real == false) {
-                                line.remove();
-                            }
-                        });
-                        cell.virtualLines = [];
-                    });
-                });
+                this.isCaptured = false;
             }
 
             create() {
@@ -80,33 +166,34 @@
                     menu.style.left = e.pageX + 'px';
                     menu.style.top = e.pageY + 'px';
                     menu.innerHTML = `
-                <div>Position: (${this.x}, ${this.y})</div>
-                <div>Joueur: ${this.player}</div>
-                <div>ID: ${this.id}</div>
-                <div>Peut avoir des lignes: ${this.canHaveLine}</div>
-                <div>Lignes virtuelles: ${this.virtualLines.length}</div>
+                        <div>Position: (${this.x}, ${this.y})</div>
+                        <div>Joueur: ${this.player}</div>
+                        <div>ID: ${this.id}</div>
+                        <div>Capturé: ${this.isCaptured}</div>
                     `;
                 });
-                // Fermer le menu au clic ailleurs
                 document.addEventListener('click', (e) => {
-                    const menu = document.getElementById('contextMenu');
-                    menu.style.display = 'none';
+                    if (!e.target.closest('.context-menu')) {
+                        const menu = document.getElementById('contextMenu');
+                        if (menu) menu.style.display = 'none';
+                    }
                 });
 
-                // Utilisation d'une fonction fléchée pour préserver le contexte
-                div.onclick = () => this.draw(player);
+                div.onclick = () => {
+                    if (this.player === 0 && !this.isCaptured) {
+                        this.draw(player);
+                    }
+                };
 
                 document.body.appendChild(div);
-            }
-
-            draw(currentPlayer) {
-                if (this.player != 0) { //si la case est déja occupée on ne fait rien
+            }            draw(currentPlayer) {
+                // Vérifier si la case est libre ET pas dans une zone capturée
+                if (this.player != 0 || this.isCaptured || this.isInCapturedArea()) {
+                    console.log(`Placement impossible sur (${this.x}, ${this.y}) - Case occupée ou dans zone capturée`);
                     return;
                 }
 
-                var cell = document.getElementById('case' + this.x + "_" + this.y);
-
-                // Créer le cercle
+                var cell = document.getElementById(this.id);
                 var circle = document.createElement('div');
                 circle.style.width = circleSize + 'px';
                 circle.style.height = circleSize + 'px';
@@ -114,13 +201,10 @@
                 circle.style.position = 'absolute';
                 circle.id = 'circle' + this.x + "_" + this.y;
 
-
-                // Centrer le cercle dans la case (50px - 30px = 20px de différence, donc 10px de marge)
                 var diff = (caseSize - circleSize) / 2;
                 circle.style.left = diff + 'px';
                 circle.style.top = diff + 'px';
 
-                // Définir la couleur selon le joueur
                 if (currentPlayer == 1) {
                     this.player = 1;
                     circle.style.backgroundColor = player1Color;
@@ -131,114 +215,190 @@
                     player = 1;
                 }
                 cell.appendChild(circle);
-                boucle(this);
+
+                setTimeout(() => {
+                    detectAndProcessLoops(this);
+                }, 0);
             }
 
-            neighbors(player, once = false) {
-                let neighbors = [];
-                if (this.x > 0 && cases[this.y][this.x - 1].player == player && cases[this.y][this.x - 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y][this.x - 1]);
-                    if (once) {
-                        return neighbors;
+            // Vérifie si cette case est dans une zone déjà encerclée par des lignes réelles
+            isInCapturedArea() {
+                if (realLines.length === 0) return false;
+                
+                // Créer des groupes de lignes connectées pour former des polygones fermés
+                const polygons = this.findClosedPolygons();
+                
+                for (const polygon of polygons) {
+                    if (PolygonUtils.isPointInPolygon(this, polygon)) {
+                        return true;
                     }
                 }
-                if (this.x < gridlength - 1 && cases[this.y][this.x + 1].player == player && cases[this.y][this.x + 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y][this.x + 1]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.y > 0 && cases[this.y - 1][this.x].player == player && cases[this.y - 1][this.x].canHaveLine == true) {
-                    neighbors.push(cases[this.y - 1][this.x]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.y < gridlength - 1 && cases[this.y + 1][this.x].player == player && cases[this.y + 1][this.x].canHaveLine == true) {
-                    neighbors.push(cases[this.y + 1][this.x]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.x > 0 && this.y > 0 && cases[this.y - 1][this.x - 1].player == player && cases[this.y - 1][this.x - 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y - 1][this.x - 1]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.x < gridlength - 1 && this.y > 0 && cases[this.y - 1][this.x + 1].player == player && cases[this.y - 1][this.x + 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y - 1][this.x + 1]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.x > 0 && this.y < gridlength - 1 && cases[this.y + 1][this.x - 1].player == player && cases[this.y + 1][this.x - 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y + 1][this.x - 1]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-                if (this.x < gridlength - 1 && this.y < gridlength - 1 && cases[this.y + 1][this.x + 1].player == player && cases[this.y + 1][this.x + 1].canHaveLine == true) {
-                    neighbors.push(cases[this.y + 1][this.x + 1]);
-                    if (once) {
-                        return neighbors;
-                    }
-                }
-
-                return neighbors;
+                return false;
             }
 
-            canNotHaveLine() {
-                this.canHaveLine = false;
-                this.virtualLines.forEach(line => {
-                    line.remove();
-                });
-                this.virtualLines = [];
-                var div = document.getElementById(this.id);
+            // Trouve tous les polygones fermés formés par les lignes réelles
+            findClosedPolygons() {
+                const polygons = [];
+                const usedLines = new Set();
+                
+                for (const startLine of realLines) {
+                    if (usedLines.has(startLine.id)) continue;
+                    
+                    const polygon = this.tracePolygon(startLine, usedLines);
+                    if (polygon && polygon.length >= 3) {
+                        polygons.push(polygon);
+                    }
+                }
+                
+                return polygons;
+            }
+
+            // Trace un polygone à partir d'une ligne de départ
+            tracePolygon(startLine, usedLines) {
+                if (usedLines.has(startLine.id)) return null;
+                
+                const polygon = [startLine.case1, startLine.case2];
+                usedLines.add(startLine.id);
+                let currentCase = startLine.case2;
+                
+                while (true) {
+                    let nextLine = null;
+                    
+                    // Chercher une ligne connectée qui n'a pas été utilisée
+                    for (const line of realLines) {
+                        if (usedLines.has(line.id)) continue;
+                        
+                        if (line.case1.id === currentCase.id) {
+                            nextLine = line;
+                            currentCase = line.case2;
+                            break;
+                        } else if (line.case2.id === currentCase.id) {
+                            nextLine = line;
+                            currentCase = line.case1;
+                            break;
+                        }
+                    }
+                    
+                    if (!nextLine) break;
+                    
+                    // Si on revient au point de départ, le polygone est fermé
+                    if (currentCase.id === startLine.case1.id) {
+                        usedLines.add(nextLine.id);
+                        return polygon;
+                    }
+                    
+                    polygon.push(currentCase);
+                    usedLines.add(nextLine.id);
+                }
+                
+                return null; // Polygone non fermé
+            }
+
+            neighbors(p, once = false) {
+                let neighborsList = [];
+                const directions = [
+                    [-1, 0], [1, 0], [0, -1], [0, 1],
+                    [-1, -1], [1, -1], [-1, 1], [1, 1]
+                ];
+
+                for (const [dx, dy] of directions) {
+                    const nx = this.x + dx;
+                    const ny = this.y + dy;
+
+                    if (nx >= 0 && nx < gridlength && ny >= 0 && ny < gridlength) {
+                        const neighborCase = cases[ny][nx];
+                        if (neighborCase.player === p && !neighborCase.isCaptured) {
+                            neighborsList.push(neighborCase);
+                            if (once) return neighborsList;
+                        }
+                    }
+                }
+                return neighborsList;
+            }
+
+            capture() {
+                this.isCaptured = true;
+                this.player = 0;
+
                 var circle = document.getElementById('circle' + this.x + "_" + this.y);
-                circle.style.border = '1px solid black';
-                circle.style.opacity = '0.5';
+                if (circle) {
+                    circle.remove();
+                }
+
+                var div = document.getElementById(this.id);
+                if (div) {
+                    div.style.backgroundColor = '#A0A0A0';
+                }
+
                 div.onclick = null;
+            }
+
+            reset() {
+                this.player = 0;
+                this.isCaptured = false;
+                this.canHaveLine = true;
+                const div = document.getElementById(this.id);
+                if (div) {
+                    div.style.backgroundColor = backgroundColor;
+                    const circle = document.getElementById('circle' + this.x + "_" + this.y);
+                    if (circle) circle.remove();
+                    div.onclick = () => {
+                        if (this.player === 0 && !this.isCaptured) {
+                            this.draw(player);
+                        }
+                    };
+                }
             }
         }
 
+        // --- Line Class (version unique) ---
         class Line {
             constructor(case1, case2, real) {
+                if (case1.id > case2.id) { [case1, case2] = [case2, case1]; }
+
                 this.case1 = case1;
                 this.case2 = case2;
-                this.real = real; // true si la ligne est réelle, false si elle est virtuelle (pour les lignes qu'on est entrain de contruire)
-                this.id = 'line' + this.case1.x + '_' + this.case1.y + '_' + this.case2.x + '_' + this.case2.y;
-                if (this.real) {
-                    if (Line.lineExists(this.case1, this.case2, realLines)) {
-                        return false;
-                    }
-                    realLines.push(this);
-                } else {
-                    if (Line.lineExists(this.case1, this.case2, virtualLines)) {
-                        return false;
-                    }
-                    virtualLines.push(this);
+                this.real = real;
+                this.id = 'line_' + this.case1.x + '_' + this.case1.y + '_' + this.case2.x + '_' + this.case2.y;
+
+                const targetArray = real ? realLines : virtualLines;
+                if (Line.lineExists(this.case1, this.case2, targetArray)) {
+                    return null;
                 }
+                targetArray.push(this);
             }
 
             static lineExists(case1, case2, array) {
-                return array.some(line =>
-                    (line.case1 === case1 && line.case2 === case2) ||
-                    (line.case1 === case2 && line.case2 === case1)
-                );
+                if (case1.id > case2.id) { [case1, case2] = [case2, case1]; }
+                const idToCheck = 'line_' + case1.x + '_' + case1.y + '_' + case2.x + '_' + case2.y;
+                return array.some(line => line.id === idToCheck);
+            }
+
+            getCenterCoords(c) {
+                return {
+                    x: c.x * caseSize + caseSize / 2,
+                    y: c.y * caseSize + caseSize / 2
+                };
             }
 
             create() {
+                if (document.getElementById(this.id)) {
+                    const element = document.getElementById(this.id);
+                    element.style.opacity = this.real ? '1' : '0.4';
+                    element.style.backgroundColor = this.case1.player == 1 ? player1Color : player2Color;
+                    element.style.zIndex = this.real ? '50' : '40';
+                    return;
+                }
+
                 const line = document.createElement('div');
                 line.style.position = 'absolute';
                 line.style.height = '4px';
                 line.style.backgroundColor = this.case1.player == 1 ? player1Color : player2Color;
-                line.style.zIndex = '1000';
-                line.style.borderRadius = '2px'; // Arrondir les bouts de ligne
-                if (this.real == false) {
-                    line.style.opacity = '0.5';
-                }
+                line.style.borderRadius = '2px';
+                line.style.opacity = this.real ? '1' : '0.4';
+                line.style.zIndex = this.real ? '50' : '40';
                 line.id = this.id;
+
                 line.addEventListener('contextmenu', (e) => {
                     e.preventDefault();
                     const menu = document.getElementById('contextMenu');
@@ -246,33 +406,22 @@
                     menu.style.left = e.pageX + 'px';
                     menu.style.top = e.pageY + 'px';
                     menu.innerHTML = `
-                <div>case1: (${this.case1.id})</div>
-                <div>case2: ${this.case2.id}</div>
-                <div>ID: ${this.id}</div>
-                <div> statut: ${this.real}</div>
+                        <div>Line: ${this.id}</div>
+                        <div>Case1: (${this.case1.x}, ${this.case1.y}) Player ${this.case1.player}</div>
+                        <div>Case2: (${this.case2.x}, ${this.case2.y}) Player ${this.case2.player}</div>
+                        <div>Real: ${this.real}</div>
                     `;
                 });
 
-                // Fermer le menu au clic ailleurs
-                document.addEventListener('click', (e) => {
-                    const menu = document.getElementById('contextMenu');
-                    menu.style.display = 'none';
-                });
+                const p1 = this.getCenterCoords(this.case1);
+                const p2 = this.getCenterCoords(this.case2);
 
-                // Calculer les coordonnées du centre des cases
-                const x1 = this.case1.x * caseSize + (caseSize / 2);
-                const y1 = this.case1.y * caseSize + (caseSize / 2);
-                const x2 = this.case2.x * caseSize + (caseSize / 2);
-                const y2 = this.case2.y * caseSize + (caseSize / 2);
+                const length = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+                const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
 
-                // Calculer la longueur et l'angle de la ligne
-                const length = Math.sqrt(Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)) + 2;
-                const angle = Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI;
-
-                // Appliquer les styles pour positionner la ligne
                 line.style.width = length + 'px';
-                line.style.left = x1 + 'px';
-                line.style.top = y1 - 2 + 'px'; // -2 pour centrer la ligne (épaisseur/2)
+                line.style.left = p1.x + 'px';
+                line.style.top = p1.y - 2 + 'px';
                 line.style.transform = `rotate(${angle}deg)`;
                 line.style.transformOrigin = '0 50%';
 
@@ -280,69 +429,517 @@
             }
 
             remove() {
-                // Supprimer du tableau approprié
-                if (this.real) {
-                    realLines.splice(realLines.indexOf(this), 1);
-                } else {
-                    virtualLines.splice(virtualLines.indexOf(this), 1);
-                }
-                // Supprimer l'élément DOM
                 const element = document.getElementById(this.id);
                 if (element) {
                     element.remove();
                 }
 
+                let index = realLines.findIndex(l => l.id === this.id);
+                if (index > -1) {
+                    realLines.splice(index, 1);
+                } else {
+                    index = virtualLines.findIndex(l => l.id === this.id);
+                    if (index > -1) {
+                        virtualLines.splice(index, 1);
+                    }
+                }
                 this.case1 = null;
                 this.case2 = null;
             }
 
             static removeAllVirtual() {
-                virtualLines.forEach(line => {
-                    const element = document.getElementById(line.id);
-                    if (element) {
-                        element.remove();
-                    }
-                    line.case1 = null;
-                    line.case2 = null;
-                });
+                for (let i = virtualLines.length - 1; i >= 0; i--) {
+                    virtualLines[i].remove();
+                }
                 virtualLines = [];
             }
 
             static removeAllReal() {
-                realLines.forEach(line => {
-                    const element = document.getElementById(line.id);
-                    if (element) {
-                        element.remove();
-                    }
-                    line.case1 = null;
-                    line.case2 = null;
-                });
+                for (let i = realLines.length - 1; i >= 0; i--) {
+                    realLines[i].remove();
+                }
                 realLines = [];
-            }
+            }            makeReal() {
+                if (this.real) return;
 
-            makeReal() {
+                // Retirer de virtualLines d'abord
+                let index = virtualLines.findIndex(l => l.id === this.id);
+                if (index > -1) {
+                    virtualLines.splice(index, 1);
+                }
+
                 this.real = true;
-                realLines.push(this);
-                virtualLines.splice(virtualLines.indexOf(this), 1);
+
+                // Ajouter à realLines seulement si pas déjà présent
+                if (!Line.lineExists(this.case1, this.case2, realLines)) {
+                    realLines.push(this);
+                }
+
+                // Mettre à jour l'affichage
                 const element = document.getElementById(this.id);
                 if (element) {
                     element.style.opacity = '1';
+                    element.style.zIndex = '50';
+                } else {
+                    this.create();
                 }
-                this.create();
+                
+                console.log(`Ligne rendue réelle: ${this.id}`);
+            }
+        }        // --- NOUVEAU SYSTÈME DE CAPTURE AMÉLIORÉ ---
+
+        // Classe utilitaire pour les opérations géométriques
+        class PolygonUtils {
+            // Algorithme ray-casting amélioré pour déterminer si un point est dans un polygone
+            static isPointInPolygon(point, polygon) {
+                const x = point.x + 0.5;
+                const y = point.y + 0.5;
+                let inside = false;
+                
+                for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+                    const xi = polygon[i].x + 0.5;
+                    const yi = polygon[i].y + 0.5;
+                    const xj = polygon[j].x + 0.5;
+                    const yj = polygon[j].y + 0.5;
+                    
+                    if (((yi > y) !== (yj > y)) && 
+                        (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+                        inside = !inside;
+                    }
+                }
+                return inside;
+            }
+
+            // Calcule l'aire d'un polygone (pour vérifier s'il est valide)
+            static polygonArea(polygon) {
+                let area = 0;
+                for (let i = 0; i < polygon.length; i++) {
+                    const j = (i + 1) % polygon.length;
+                    area += polygon[i].x * polygon[j].y;
+                    area -= polygon[j].x * polygon[i].y;
+                }
+                return Math.abs(area) / 2;
             }
         }
 
+        // Classe pour représenter et analyser les boucles
+        class LoopDetector {
+            constructor(player) {
+                this.player = player;
+                this.debugMode = false;
+            }            // Trouve toutes les boucles possibles pour un joueur
+            async findLoops(startCase) {
+                const loops = [];
+                const visited = new Set();
+                
+                await this.dfsForLoops(startCase, [startCase], visited, loops);
+                
+                if (this.debugMode) {
+                    console.log(`Trouvé ${loops.length} boucles pour le joueur ${this.player}`);
+                }
+                
+                return loops;
+            }// Recherche récursive de boucles avec DFS
+            async dfsForLoops(currentCase, path, globalVisited, loops) {
+                const neighbors = currentCase.neighbors(this.player);
+                
+                // Visualisation en mode dev
+                if (devMode && this.debugMode) {
+                    await this.highlightCurrentPath(path);
+                    console.log(`🔍 [DFS] Exploration depuis (${currentCase.x},${currentCase.y}), chemin: ${path.map(c => `(${c.x},${c.y})`).join(' -> ')}`);
+                    
+                    // Petit délai pour permettre la visualisation
+                    await new Promise(resolve => setTimeout(resolve, debugStepDelay / 8));
+                }
+                
+                for (const neighbor of neighbors) {
+                    // Si on revient au point de départ et qu'on a au moins 3 cases
+                    if (path.length >= 3 && neighbor === path[0]) {
+                        const loop = [...path];
+                        if (this.isValidLoop(loop)) {
+                            loops.push(loop);
+                            if (this.debugMode) {
+                                console.log('🎯 [DFS] Boucle valide trouvée:', loop.map(c => `(${c.x},${c.y})`));
+                                if (devMode) {
+                                    await this.highlightFoundLoop(loop);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    
+                    // Éviter de revisiter des cases dans le même chemin
+                    if (path.indexOf(neighbor) === -1) {
+                        const newPath = [...path, neighbor];
+                        await this.dfsForLoops(neighbor, newPath, globalVisited, loops);
+                    }
+                }
+                
+                // Nettoyer la visualisation
+                if (devMode && this.debugMode) {
+                    await this.clearPathHighlight(path);
+                }
+            }
+
+            // Visualise le chemin actuel en mode dev
+            async highlightCurrentPath(path) {
+                if (!devMode || path.length < 2) return;
+                
+                for (let i = 0; i < path.length - 1; i++) {
+                    const line = document.createElement('div');
+                    line.className = 'debug-path-line';
+                    line.style.position = 'absolute';
+                    line.style.height = '6px';
+                    line.style.backgroundColor = '#FFD700'; // Couleur dorée pour exploration
+                    line.style.opacity = '0.7';
+                    line.style.zIndex = '999';
+                    line.style.borderRadius = '3px';
+                    
+                    const p1 = {
+                        x: path[i].x * caseSize + caseSize / 2,
+                        y: path[i].y * caseSize + caseSize / 2
+                    };
+                    const p2 = {
+                        x: path[i + 1].x * caseSize + caseSize / 2,
+                        y: path[i + 1].y * caseSize + caseSize / 2
+                    };
+                    
+                    const length = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+                    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
+                    
+                    line.style.width = length + 'px';
+                    line.style.left = p1.x + 'px';
+                    line.style.top = p1.y - 3 + 'px';
+                    line.style.transform = `rotate(${angle}deg)`;
+                    line.style.transformOrigin = '0 50%';
+                    line.id = `debug-path-${path[i].x}-${path[i].y}-${path[i + 1].x}-${path[i + 1].y}`;
+                    
+                    document.body.appendChild(line);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, debugStepDelay / 4));
+            }
+
+            // Met en évidence une boucle trouvée
+            async highlightFoundLoop(loop) {
+                if (!devMode) return;
+                
+                for (let i = 0; i < loop.length; i++) {
+                    const c1 = loop[i];
+                    const c2 = loop[(i + 1) % loop.length];
+                    
+                    const line = document.createElement('div');
+                    line.className = 'debug-loop-line';
+                    line.style.position = 'absolute';
+                    line.style.height = '8px';
+                    line.style.backgroundColor = '#FF6B6B'; // Rouge pour boucle trouvée
+                    line.style.opacity = '0.9';
+                    line.style.zIndex = '998';
+                    line.style.borderRadius = '4px';
+                    line.style.boxShadow = '0 0 10px rgba(255, 107, 107, 0.5)';
+                    
+                    const p1 = {
+                        x: c1.x * caseSize + caseSize / 2,
+                        y: c1.y * caseSize + caseSize / 2
+                    };
+                    const p2 = {
+                        x: c2.x * caseSize + caseSize / 2,
+                        y: c2.y * caseSize + caseSize / 2
+                    };
+                    
+                    const length = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+                    const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * 180 / Math.PI;
+                    
+                    line.style.width = length + 'px';
+                    line.style.left = p1.x + 'px';
+                    line.style.top = p1.y - 4 + 'px';
+                    line.style.transform = `rotate(${angle}deg)`;
+                    line.style.transformOrigin = '0 50%';
+                    line.id = `debug-loop-${c1.x}-${c1.y}-${c2.x}-${c2.y}`;
+                    
+                    document.body.appendChild(line);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, debugStepDelay));
+                
+                // Supprimer les lignes de debug après visualisation
+                document.querySelectorAll('.debug-loop-line').forEach(el => el.remove());
+            }
+
+            // Nettoie les visualisations du chemin
+            async clearPathHighlight(path) {
+                if (!devMode || path.length < 2) return;
+                
+                for (let i = 0; i < path.length - 1; i++) {
+                    const id = `debug-path-${path[i].x}-${path[i].y}-${path[i + 1].x}-${path[i + 1].y}`;
+                    const element = document.getElementById(id);
+                    if (element) {
+                        element.remove();
+                    }
+                }
+            }
+
+            // Vérifie si une boucle est valide
+            isValidLoop(loop) {
+                if (loop.length < 3) return false;
+                
+                // Vérifier que la boucle forme un polygone fermé
+                const area = PolygonUtils.polygonArea(loop);
+                return area > 0.5; // Aire minimale pour éviter les boucles dégénérées
+            }
+
+            // Trouve la meilleure boucle (plus grande aire avec des captures)
+            findBestLoop(loops) {
+                let bestLoop = null;
+                let maxScore = 0;
+                
+                for (const loop of loops) {
+                    const capturedCount = this.countCapturedPieces(loop);
+                    const area = PolygonUtils.polygonArea(loop);
+                    const score = capturedCount * 10 + area; // Priorité aux captures
+                    
+                    if (score > maxScore) {
+                        maxScore = score;
+                        bestLoop = loop;
+                    }
+                }
+                
+                return bestLoop;
+            }
+
+            // Compte les pièces adverses qui seraient capturées
+            countCapturedPieces(loop) {
+                let count = 0;
+                const enemyPlayer = this.player === 1 ? 2 : 1;
+                
+                for (let y = 0; y < gridlength; y++) {
+                    for (let x = 0; x < gridlength; x++) {
+                        const c = cases[y][x];
+                        if (c.player === enemyPlayer && !c.isCaptured) {
+                            if (PolygonUtils.isPointInPolygon(c, loop)) {
+                                count++;
+                            }
+                        }
+                    }
+                }
+                
+                return count;
+            }            // Exécute la capture pour une boucle donnée
+            executeCapture(loop) {
+                if (!loop) return false;
+                
+                let capturedAny = false;
+                let pointsEarned = 0;
+                const enemyPlayer = this.player === 1 ? 2 : 1;
+                
+                // Trouver les cases à capturer dans la boucle
+                const casesToCapture = [];
+                const enemyCasesInLoop = [];
+                
+                for (let y = 0; y < gridlength; y++) {
+                    for (let x = 0; x < gridlength; x++) {
+                        const c = cases[y][x];
+                        if (PolygonUtils.isPointInPolygon(c, loop)) {
+                            // NE PAS capturer les pions du joueur qui a formé la boucle
+                            if (c.player !== this.player) {
+                                casesToCapture.push(c);
+                                
+                                // Compter seulement les pions adverses pour les points
+                                if (c.player === enemyPlayer && !c.isCaptured) {
+                                    enemyCasesInLoop.push(c);
+                                    pointsEarned++;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (casesToCapture.length > 0) {
+                    // Il y a des cases à capturer : créer les lignes réelles
+                    this.createLoopLines(loop, true);
+                    
+                    // Capturer seulement les cases ennemies et vides
+                    for (const caseToCapture of casesToCapture) {
+                        if (!caseToCapture.isCaptured) {
+                            caseToCapture.capture();
+                            capturedAny = true;
+                            if (this.debugMode) {
+                                const type = caseToCapture.player === 0 ? "vide" : 
+                                           caseToCapture.player === enemyPlayer ? "ennemi" : "neutre";
+                                console.log(`Capturé case ${type}: (${caseToCapture.x}, ${caseToCapture.y})`);
+                            }
+                        }
+                    }
+                    
+                    // Ajouter les points au score
+                    if (pointsEarned > 0) {
+                        if (this.player === 1) {
+                            player1Score += pointsEarned;
+                        } else {
+                            player2Score += pointsEarned;
+                        }
+                        updateScoreDisplay();
+                    }
+                    
+                    console.log(`Capture réussie! ${casesToCapture.length} cases capturées, ${pointsEarned} points gagnés.`);
+                } else {
+                    // Pas de captures : créer des lignes virtuelles temporaires
+                    this.createLoopLines(loop, false);
+                    setTimeout(() => {
+                        Line.removeAllVirtual();
+                    }, 2000);
+                    console.log('Boucle formée mais aucune case à capturer.');
+                }
+                
+                return capturedAny;
+            }// Crée les lignes visuelles pour une boucle
+            createLoopLines(loop, makeReal = false) {
+                const lines = [];
+                
+                for (let i = 0; i < loop.length; i++) {
+                    const c1 = loop[i];
+                    const c2 = loop[(i + 1) % loop.length];
+                    
+                    // Vérifier si la ligne existe déjà
+                    const targetArray = makeReal ? realLines : virtualLines;
+                    
+                    if (!Line.lineExists(c1, c2, targetArray)) {
+                        const line = new Line(c1, c2, makeReal);
+                        if (line) {
+                            line.create();
+                            lines.push(line);
+                        }
+                    } else {
+                        // Si la ligne existe déjà et qu'on veut la rendre réelle
+                        if (makeReal) {
+                            const existingLine = targetArray.find(l => 
+                                (l.case1.id === c1.id && l.case2.id === c2.id) ||
+                                (l.case1.id === c2.id && l.case2.id === c1.id)
+                            );
+                            if (existingLine && !existingLine.real) {
+                                existingLine.makeReal();
+                                lines.push(existingLine);
+                            }
+                        }
+                    }
+                }
+                
+                return lines;
+            }
+        }        // Fonction principale de détection et traitement des boucles
+        async function detectAndProcessLoops(lastCase) {
+            Line.removeAllVirtual(); // Nettoyer les lignes virtuelles
+            
+            const detector = new LoopDetector(lastCase.player);
+            detector.debugMode = devMode; // Utiliser le mode dev global
+            
+            if (devMode) {
+                console.log(`🔍 [DEV] Début détection de boucles pour le joueur ${lastCase.player}`);
+                console.log(`🔍 [DEV] Position de départ: (${lastCase.x}, ${lastCase.y})`);
+            }
+            
+            // Trouver toutes les boucles possibles (async)
+            const loops = await detector.findLoops(lastCase);
+            
+            if (loops.length === 0) {
+                if (devMode) {
+                    console.log('❌ [DEV] Aucune boucle détectée');
+                }
+                return;
+            }
+            
+            if (devMode) {
+                console.log(`✅ [DEV] ${loops.length} boucle(s) trouvée(s)`);
+                for (let i = 0; i < loops.length; i++) {
+                    console.log(`   Boucle ${i+1}: ${loops[i].map(c => `(${c.x},${c.y})`).join(' -> ')}`);
+                }
+            }
+            
+            // Trouver la meilleure boucle
+            const bestLoop = detector.findBestLoop(loops);
+            
+            if (bestLoop) {
+                if (devMode) {
+                    console.log('🎯 [DEV] Meilleure boucle sélectionnée:', bestLoop.map(c => `(${c.x},${c.y})`));
+                    console.log('🎯 [DEV] Exécution de la capture...');
+                }
+                detector.executeCapture(bestLoop);
+            }
+        }
+
+        // Fonction utilitaire pour les tests - algorithme ray-casting simple
+        function isPointInsideLoop(point, loopLines) {
+            const x = point.x + 0.5;
+            const y = point.y + 0.5;
+            let intersections = 0;
+            
+            for (let line of loopLines) {
+                let x1 = line.case1.x + 0.5;
+                let y1 = line.case1.y + 0.5;
+                let x2 = line.case2.x + 0.5;
+                let y2 = line.case2.y + 0.5;
+                
+                // Ignore les segments horizontaux
+                if (y1 === y2) continue;
+                
+                // Vérifie si le segment croise la ligne horizontale y
+                if ((y >= Math.min(y1, y2)) && (y < Math.max(y1, y2))) {
+                    let intersectX = x1 + (x2 - x1) * (y - y1) / (y2 - y1);
+                    if (intersectX > x) intersections++;
+                }
+            }
+            return intersections % 2 === 1;
+        }
+
+        // Fonctions de gestion des modes
+        function setGameMode(mode) {
+            devMode = (mode === 'dev');
+            
+            // Mettre à jour l'interface
+            document.getElementById('simpleMode').classList.toggle('active', !devMode);
+            document.getElementById('devMode').classList.toggle('active', devMode);
+            document.getElementById('devControls').style.display = devMode ? 'block' : 'none';
+            
+            console.log(`Mode changé vers: ${mode}`);
+            
+            if (devMode) {
+                console.log('🔧 [DEV] Mode développeur activé');
+                console.log('🔧 [DEV] Fonctionnalités disponibles:');
+                console.log('   - Tests automatiques');
+                console.log('   - Logs détaillés des algorithmes');
+                console.log('   - Vitesse de debug ajustable');
+                console.log('   - Visualisations spéciales');
+            } else {
+                console.log('🎮 Mode simple activé - Interface épurée');
+            }
+        }
+
+        function updateDebugSpeed(value) {
+            debugStepDelay = parseInt(value);
+            document.getElementById('speedValue').textContent = value + 'ms';
+            console.log(`Vitesse de debug mise à jour: ${value}ms`);
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('player1Score').textContent = player1Score;
+            document.getElementById('player2Score').textContent = player2Score;
+            
+            // Mettre à jour l'affichage du tour
+            const turnDisplay = document.getElementById('playerTurn');
+            turnDisplay.textContent = `Tour du Joueur ${player}`;
+            turnDisplay.style.backgroundColor = player === 1 ? '#e3f2fd' : '#fce4ec';
+            turnDisplay.style.color = player === 1 ? '#1976d2' : '#c2185b';
+        }
+
         function createGrid() {
-            // Créer un conteneur pour la grille
             const container = document.createElement('div');
             container.style.position = 'relative';
             container.style.width = (gridlength * caseSize) + 'px';
             container.style.height = (gridlength * caseSize) + 'px';
-            container.style.display = 'flex';
-            container.style.flexWrap = 'wrap';
+            container.id = 'grid-container';
             document.body.appendChild(container);
 
-            // Créer les cases
+            cases = [];
             for (let y = 0; y < gridlength; y++) {
                 cases[y] = [];
                 for (let x = 0; x < gridlength; x++) {
@@ -350,168 +947,317 @@
                     cases[y][x].create();
                 }
             }
-        }
-
-        // Appeler la fonction au chargement
-        window.onload = function () {
+        }        window.onload = function () {
             createGrid();
+            setupTestButton();
+            updateScoreDisplay(); // Initialiser l'affichage des scores
+        }        
+        function setupTestButton() {
+            const testButton = document.createElement('button');
+            testButton.textContent = 'Run Enclosure Tests';
+            testButton.style.position = 'fixed';
+            testButton.style.top = '300px';
+            testButton.style.right = '10px';
+            testButton.style.zIndex = '2000';
+            testButton.onclick = runEnclosureTests;
+            document.body.appendChild(testButton);
+
+            const clearButton = document.createElement('button');
+            clearButton.textContent = 'Clear Board';
+            clearButton.style.position = 'fixed';
+            clearButton.style.top = '330px';
+            clearButton.style.right = '10px';
+            clearButton.style.zIndex = '2000';
+            clearButton.onclick = clearBoard;
+            document.body.appendChild(clearButton);
+
+            const quickTestButton = document.createElement('button');
+            quickTestButton.textContent = 'Quick Test Capture';
+            quickTestButton.style.position = 'fixed';
+            quickTestButton.style.top = '360px';
+            quickTestButton.style.right = '10px';
+            quickTestButton.style.zIndex = '2000';            quickTestButton.onclick = runQuickCaptureTest;
+            document.body.appendChild(quickTestButton);
         }
 
-        function countIntersections(line, lineArray) {
-            let intersectionCount = 0;
-
-            // Fonction helper pour détecter l'intersection entre deux segments
-            function doLinesIntersect(line1, line2) {
-                // Extraire les coordonnées des points
-                let x1 = line1.case1.x;
-                let y1 = line1.case1.y;
-                let x2 = line1.case2.x;
-                let y2 = line1.case2.y;
-
-                let x3 = line2.case1.x;
-                let y3 = line2.case1.y;
-                let x4 = line2.case2.x;
-                let y4 = line2.case2.y;
-
-                // Calculer les déterminants
-                let den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-                if (den == 0) return false; // Lignes parallèles
-
-                let t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
-                let u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
-
-                // Vérifier si l'intersection est sur les deux segments
-                return (t >= 0 && t <= 1 && u >= 0 && u <= 1);
-            }
-
-            // Vérifier l'intersection avec chaque ligne du tableau
-            for (let otherLine of lineArray) {
-                // Ne pas compter l'intersection avec la ligne elle-même
-                if (line.id !== otherLine.id) {
-                    if (line.case1.player !== otherLine.case1.player) {
-                        if (doLinesIntersect(line, otherLine)) {
-                            intersectionCount++;
-                        }
-                    }
-                }
-            }
-
-            return intersectionCount;
-        }
-
-        function boucle(startingCase) { // vérifie si il y'a une boucle
-            console.log(startingCase.id);
-            let i = 0; // pour empecher les boucles infinies
-            visited = []; // aussi pour empecher les boucles infinies en vérifiant si la case a déja été visitée
-            let boucleFound = false;
-            recursive(startingCase);
-            /* async  */function recursive(currentCase) {
-                if (boucleFound) {
-                    return;
-                }
-
-                i++;
-                if (i > 1000) {
-                    console.log('boucle infinie');
-                    return;
-                }
-
-                // Obtenir les voisins avec un meilleur filtrage
-                let neighbors = (i === 1) ?
-                    currentCase.neighbors(currentCase.player, true) :
-                    currentCase.neighbors(currentCase.player).filter(n =>
-                        !visited.includes(n) || n === startingCase
-                    );
-
-                if (neighbors.length == 0) {
-                    currentCase.virtualLines.forEach(line => {
-                        line.remove();
-                    });
-                    currentCase.virtualLines = [];
-                    return;
-                }
-                for (let neighbor of neighbors) {
-                    if (neighbor == startingCase) {
-                        if (i > 3 && isValidLoop(visited)) {  // on ne peut pas avoir une boucle de moins de 3 cases
-                            console.log(startingCase.id);
-
-                            let line = new Line(currentCase, neighbor, false);
-                            line.create();
-                            console.log("\x1b[44mla boucle est bouclée, i =  " + i);
-                            boucleFound = true;
-                            drawBoucle(); // la boucle est bouclée
-                            return;
-                        }
-                    } else if (!visited.includes(neighbor)) {
-                        /* await sleep(200); */
-                        visited.push(neighbor);
-                        let line = new Line(currentCase, neighbor, false);
-                        line.create();
-                        recursive(neighbor);
-                    }
-                }
-            }
-            console.log('fin de boucle, i =  ' + i);
+        function clearBoard() {
+            Line.removeAllReal();
             Line.removeAllVirtual();
-            Case.removeAllVirtualLines();
-        }
-
-        function sleep(time) {
-            return new Promise((resolve) => setTimeout(resolve, time));
-        }
-
-        function isValidLoop(path) {
-            // Vérifier que le chemin forme une boucle valide
-            for (let i = 0; i < path.length - 1; i++) {
-                for (let j = i + 2; j < path.length; j++) {
-                    if (Line.lineExists(path[i], path[j], virtualLines)) {
-                        console.log('croisement invalide');
-                        return false; // Détection de croisement invalide
+            for (let y = 0; y < gridlength; y++) {
+                for (let x = 0; x < gridlength; x++) {
+                    if (cases[y] && cases[y][x]) {
+                        cases[y][x].reset();
                     }
                 }
             }
-            return true;
+            player = 1;
+            player1Score = 0;
+            player2Score = 0;
+            updateScoreDisplay();
+            
+            // Nettoyer les visualisations debug
+            document.querySelectorAll('.debug-path-line, .debug-loop-line').forEach(el => el.remove());
+            
+            console.log("Board cleared, scores reset.");
+        }        function runQuickCaptureTest() {
+            clearBoard();
+            
+            console.log("=== Test Rapide de Capture ===");
+            
+            // Créer un carré avec le joueur 1
+            const corner1 = cases[2][2];
+            const corner2 = cases[2][4];
+            const corner3 = cases[4][4];
+            const corner4 = cases[4][2];
+            
+            corner1.player = 1;
+            corner2.player = 1;
+            corner3.player = 1;
+            corner4.player = 1;
+            
+            // Créer les cercles visuels
+            [corner1, corner2, corner3, corner4].forEach(c => {
+                const circle = document.createElement('div');
+                circle.style.width = circleSize + 'px';
+                circle.style.height = circleSize + 'px';
+                circle.style.borderRadius = '50%';
+                circle.style.position = 'absolute';
+                circle.style.backgroundColor = player1Color;
+                circle.id = 'circle' + c.x + "_" + c.y;
+                
+                const diff = (caseSize - circleSize) / 2;
+                circle.style.left = diff + 'px';
+                circle.style.top = diff + 'px';
+                
+                document.getElementById(c.id).appendChild(circle);
+            });
+            
+            // Ajouter un pion joueur 2 à l'intérieur
+            const enemyPiece = cases[3][3];
+            enemyPiece.player = 2;
+            const enemyCircle = document.createElement('div');
+            enemyCircle.style.width = circleSize + 'px';
+            enemyCircle.style.height = circleSize + 'px';
+            enemyCircle.style.borderRadius = '50%';
+            enemyCircle.style.position = 'absolute';
+            enemyCircle.style.backgroundColor = player2Color;
+            enemyCircle.id = 'circle' + enemyPiece.x + "_" + enemyPiece.y;
+            
+            const diff = (caseSize - circleSize) / 2;
+            enemyCircle.style.left = diff + 'px';
+            enemyCircle.style.top = diff + 'px';
+            
+            document.getElementById(enemyPiece.id).appendChild(enemyCircle);
+            
+            console.log("Configuration test créée : carré J1 avec pion J2 au centre");
+            console.log("Lignes réelles avant:", realLines.length);
+            console.log("Pion J2 capturé:", enemyPiece.isCaptured);
+            console.log("Score J1 avant:", player1Score);
+            
+            // Tester la détection de capture
+            setTimeout(() => {
+                console.log("🔄 Déclenchement de la détection de boucles...");
+                detectAndProcessLoops(corner1);
+                
+                setTimeout(() => {
+                    console.log("✅ Résultats après détection:");
+                    console.log("Lignes réelles:", realLines.length);
+                    console.log("Pion J2 capturé:", enemyPiece.isCaptured);
+                    console.log("Score J1 après:", player1Score);
+                }, 1000);
+            }, 500);
         }
 
-        function drawBoucle() {
-            let countencercledcases = countEncercledCases();
-            if (encercledCases > 0) {
-                // Créer une copie du tableau virtualLines
-                let virtualLinesCopy = [...virtualLines];
+        function runEnclosureTests() {
+            console.log("--- Running Enclosure Tests ---");
+            let testsPassed = 0;
+            let testsFailed = 0;
 
-                for (let line of virtualLinesCopy) {
-                    line.makeReal();
+            const resetTestState = () => {
+                clearBoard();
+                virtualLines = [];
+                realLines = [];
+            };
+
+            const assert = (condition, message) => {
+                if (condition) {
+                    testsPassed++;
+                    console.log(`%c  PASS: ${message}`, "color: green");
+                } else {
+                    testsFailed++;
+                    console.error(`%c  FAIL: ${message}`, "color: red; font-weight: bold;");
                 }
-            }
-        }
+                return condition;
+            };
 
-        /* async */ function countEncercledCases() {
-            encercledCases = 0;
-            for (let y = 1; y < gridlength - 1; y++) {
-                for (let x = 1; x < gridlength - 1; x++) {
-                    if (cases[y][x].player == player && cases[y][x].canHaveLine == true) {
-                        line1 = new Line(cases[y][x], cases[y - 1][0], false);
-                        line2 = new Line(cases[y][x], cases[y - 1][gridlength - 1], false);  // deux ligne pour diminuer les probabilités de faux positifs a propos des case encerclées.
-                        line1.create();
-                        line2.create();
-                        console.log('nombre d\'intersection : ' + countIntersections(line1, virtualLines) + ' ' + countIntersections(line2, virtualLines));
-                        if (countIntersections(line1, virtualLines) % 2 !== 0 && countIntersections(line2, virtualLines) % 2 !== 0 && countIntersections(line1, virtualLines) !== 0 && countIntersections(line2, virtualLines) !== 0) {
-                            cases[y][x].canNotHaveLine();
-                            encercledCases++;
-                        }
-                        //enlever les ligne une fois qu'on a vérifier si la case est encerclées
-                        line1.remove();
-                        line2.remove();
-                        //await sleep(1000);
-                    }
-                }
-            }
-            console.log('fin de countEncercledCases');
-            return encercledCases;
-            //Line.removeAllVirtual();
-            //Case.removeAllVirtualLines();
-        }
+            resetTestState();
+            console.log("\nTest 1: Simple 2x2 Square Loop (Player 1 loop, P2 inside)");
+            try {
+                const c11 = cases[1][1]; c11.player = 1;
+                const c13 = cases[1][3]; c13.player = 1;
+                const c33 = cases[3][3]; c33.player = 1;
+                const c31 = cases[3][1]; c31.player = 1;
+                const p2_target = cases[2][2]; p2_target.player = 2;
+                const p1_outside = cases[0][0]; p1_outside.player = 1;
+                const p2_outside = cases[4][4]; p2_outside.player = 2;
 
+                const testLoopLines = [
+                    new Line(c11, c13, false),
+                    new Line(c13, c33, false),
+                    new Line(c33, c31, false),
+                    new Line(c31, c11, false)
+                ].filter(l => l !== null);
+
+                assert(testLoopLines.length === 4, "Test 1: Loop lines created");
+
+                const isInside = isPointInsideLoop(p2_target, testLoopLines);
+                assert(isInside, `Test 1: P2 at (${p2_target.x},${p2_target.y}) should be inside`);
+
+                const isOutside1 = isPointInsideLoop(p1_outside, testLoopLines);
+                assert(!isOutside1, `Test 1: P1 at (${p1_outside.x},${p1_outside.y}) should be outside`);
+
+                const isOutside2 = isPointInsideLoop(p2_outside, testLoopLines);
+                assert(!isOutside2, `Test 1: P2 at (${p2_outside.x},${p2_outside.y}) should be outside`);
+
+                const p_on_line = cases[1][2]; p_on_line.player = 2;
+                const isOnLine = isPointInsideLoop(p_on_line, testLoopLines);
+                assert(!isOnLine, `Test 1: Point on line (${p_on_line.x},${p_on_line.y}) should be outside`);
+
+            } catch (e) {
+                console.error("Error during Test 1:", e);
+                testsFailed++;
+            }
+            Line.removeAllVirtual();
+
+            resetTestState();
+            console.log("\nTest 2: Loop touching top boundary");
+            try {
+                const c01 = cases[0][1]; c01.player = 1;
+                const c03 = cases[0][3]; c03.player = 1;
+                const c23 = cases[2][3]; c23.player = 1;
+                const c21 = cases[2][1]; c21.player = 1;
+                const p2_target = cases[1][2]; p2_target.player = 2;
+                const p2_outside = cases[3][2]; p2_outside.player = 2;
+
+                const testLoopLines = [
+                    new Line(c01, c03, false),
+                    new Line(c03, c23, false),
+                    new Line(c23, c21, false),
+                    new Line(c21, c01, false)
+                ].filter(l => l !== null);
+
+                assert(testLoopLines.length === 4, "Test 2: Loop lines created");
+                assert(isPointInsideLoop(p2_target, testLoopLines), `Test 2: P2 at (${p2_target.x},${p2_target.y}) should be inside`);
+                assert(!isPointInsideLoop(p2_outside, testLoopLines), `Test 2: P2 at (${p2_outside.x},${p2_outside.y}) should be outside`);
+            } catch (e) {
+                console.error("Error during Test 2:", e);
+                testsFailed++;
+            }
+            Line.removeAllVirtual();
+
+            resetTestState();
+            console.log("\nTest 3: Concave Loop (Pacman shape)");
+            try {
+                const c11 = cases[1][1]; c11.player = 1;
+                const c14 = cases[1][4]; c14.player = 1;
+                const c34 = cases[3][4]; c34.player = 1;
+                const c33 = cases[3][3]; c33.player = 1;
+                const c23 = cases[2][3]; c23.player = 1;
+                const c22 = cases[2][2]; c22.player = 1;
+                const c32 = cases[3][2]; c32.player = 1;
+                const c31 = cases[3][1]; c31.player = 1;
+
+                const p2_inside = cases[1][2]; p2_inside.player = 2;
+                const p2_outside_indent = cases[2][1]; p2_outside_indent.player = 2;
+                const p2_outside_far = cases[4][4]; p2_outside_far.player = 2;
+
+                const testLoopLines = [
+                    new Line(c11, c14, false), new Line(c14, c34, false),
+                    new Line(c34, c33, false), new Line(c33, c23, false),
+                    new Line(c23, c22, false), new Line(c22, c32, false),
+                    new Line(c32, c31, false), new Line(c31, c11, false)
+                ].filter(l => l !== null);
+
+                assert(testLoopLines.length === 8, "Test 3: Loop lines created");
+                assert(isPointInsideLoop(p2_inside, testLoopLines), `Test 3: P2 at (${p2_inside.x},${p2_inside.y}) should be inside`);
+                assert(!isPointInsideLoop(p2_outside_indent, testLoopLines), `Test 3: P2 at (${p2_outside_indent.x},${p2_outside_indent.y}) should be outside (indent)`);
+                assert(!isPointInsideLoop(p2_outside_far, testLoopLines), `Test 3: P2 at (${p2_outside_far.x},${p2_outside_far.y}) should be outside (far)`);
+
+            } catch (e) {
+                console.error("Error during Test 3:", e);
+                testsFailed++;
+            }
+            Line.removeAllVirtual();            resetTestState();
+            console.log("\nTest 4: Loop with no opponent stones inside");
+            try {
+                const c11 = cases[1][1]; c11.player = 1;
+                const c13 = cases[1][3]; c13.player = 1;
+                const c33 = cases[3][3]; c33.player = 1;
+                const c31 = cases[3][1]; c31.player = 1;
+                const p2_outside = cases[4][4]; p2_outside.player = 2;
+
+                const detector = new LoopDetector(1);
+                detector.debugMode = true;
+                const loop = [c11, c13, c33, c31];
+                
+                const initialVirtualCount = virtualLines.length;
+                const result = detector.executeCapture(loop);
+
+                assert(p2_outside.isCaptured === false, "Test 4: Outside stone not captured");
+                assert(!result, "Test 4: No capture should occur when no pieces inside");
+
+            } catch (e) {
+                console.error("Error during Test 4:", e);
+                testsFailed++;
+            }
+            Line.removeAllVirtual();
+            Line.removeAllReal();            resetTestState();
+            console.log("\nTest 5: executeCapture causes capture and makes lines real");
+            try {
+                const c11 = cases[1][1]; c11.player = 1;
+                const c13 = cases[1][3]; c13.player = 1;
+                const c33 = cases[3][3]; c33.player = 1;
+                const c31 = cases[3][1]; c31.player = 1;
+                const p2_target = cases[2][2]; p2_target.player = 2;
+
+                // Simuler l'affichage des cases
+                [c11, c13, c33, c31].forEach(c => {
+                    const circle = document.createElement('div');
+                    circle.id = 'circle' + c.x + "_" + c.y;
+                    document.getElementById(c.id).appendChild(circle);
+                });
+                
+                const p2Circle = document.createElement('div');
+                p2Circle.id = 'circle' + p2_target.x + "_" + p2_target.y;
+                document.getElementById(p2_target.id).appendChild(p2Circle);
+
+                const detector = new LoopDetector(1);
+                detector.debugMode = true;
+                const loop = [c11, c13, c33, c31];
+                
+                const initialScore1 = player1Score;
+                const result = detector.executeCapture(loop);
+
+                assert(p2_target.isCaptured === true, `Test 5: Target stone (${p2_target.x},${p2_target.y}) should be captured`);
+                assert(result === true, "Test 5: Capture should return true when successful");
+                assert(player1Score === initialScore1 + 1, `Test 5: Player 1 score should increase by 1 (Expected ${initialScore1 + 1}, Got ${player1Score})`);
+                assert(realLines.length === 4, `Test 5: Real lines should be 4 after capture (Expected 4, Got ${realLines.length})`);
+
+            } catch (e) {
+                console.error("Error during Test 5:", e);
+                testsFailed++;
+            }
+            Line.removeAllVirtual();
+            Line.removeAllReal();
+
+            console.log("\n--- Test Summary ---");
+            if (testsFailed === 0) {
+                console.log(`%cAll ${testsPassed} tests passed!`, "color: green; font-size: 1.2em;");
+            } else {
+                console.error(`%c${testsPassed} tests passed, ${testsFailed} tests FAILED.`, "color: red; font-size: 1.2em;");
+            }
+            console.log("--------------------");
+        }
     </script>
 </body>
 
